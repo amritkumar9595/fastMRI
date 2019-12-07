@@ -1,10 +1,9 @@
-
+import itertools
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-from models.unet.unet_model import UnetModel
 from models.wrappers import ResidualForm
-import numpy as np
 
 def init_noise_(tensor, init):
     with torch.no_grad():
@@ -40,14 +39,56 @@ def get_refinement_block(model='automap_scae', in_channel=1, out_channel=1):
                              nn.Conv2d(64, 64, 3, 1, 1), nn.ReLU(True),
                              nn.Conv2d(64, 64, 3, 1, 1), nn.ReLU(True),
                              nn.Conv2d(64, out_channel, 3, 1, 1))
-    # elif model=='fastmri_unet':
-    #     #FIXME send args.xxx from **kwargs
-    #     return UnetModel(in_chans=in_channel,out_chans=out_channel,
-    #         chans=args.num_chans,
-    #         num_pool_layers=args.num_pools,
-    #         drop_prob=args.drop_prob)
     else:
         raise NotImplementedError
+
+
+# def init_fourier_2d(N, M, inverse=True, norm='ortho', out_tensor=None,
+#                     complex_type=np.complex64):
+#     """Initialise fully connected layer as 2D Fourier transform
+
+#     Parameters
+#     ----------
+
+#     N, M: a number of rows and columns
+
+#     inverse: bool (default: True) - if True, initialise with the weights for
+#     inverse fourier transform
+
+#     norm: 'ortho' or None (default: 'ortho')
+
+#     out_tensor: torch.Tensor (default: None) - if given, copies the values to
+#     out_tensor
+
+#     """
+#     dft1mat_m = np.zeros((M, M), dtype=complex_type)
+#     dft1mat_n = np.zeros((N, N), dtype=complex_type)
+#     sign = 1 if inverse else -1
+
+#     for (l, m) in itertools.product(range(M), range(M)):
+#         dft1mat_m[l,m] = np.exp(sign * 2 * np.pi * 1j * (m * l / M))
+
+#     for (k, n) in itertools.product(range(N), range(N)):
+#         dft1mat_n[k,n] = np.exp(sign * 2 * np.pi * 1j * (n * k / N))
+
+#     # kronecker product
+#     mat_kron = np.kron(dft1mat_n, dft1mat_m)
+
+#     # split complex channels into two real channels
+#     mat_split = np.block([[np.real(mat_kron), -np.imag(mat_kron)],
+#                           [np.imag(mat_kron), np.real(mat_kron)]])
+
+#     if norm == 'ortho':
+#         mat_split /= np.sqrt(N * M)
+#     elif inverse:
+#         mat_split /= (N * M)
+
+#     if out_tensor is not None:
+#         out_tensor.data[...] = torch.Tensor(mat_split)
+#     else:
+#         out_tensor = mat_split
+#     return out_tensor
+
 
 
 class GeneralisedIFT2Layer(nn.Module):
@@ -56,7 +97,7 @@ class GeneralisedIFT2Layer(nn.Module):
                  nch_in, nch_int=None, nch_out=None,
                  kernel_size=1, nl=None,
                  init_fourier=True, init=None, bias=False, batch_norm=False,
-                 share_tfxs=False, learnable=True,shift=False):
+                 share_tfxs=False, learnable=True):
         """Generalised domain transform layer
 
         The layer can be initialised as Fourier transform if nch_in == nch_int
@@ -150,7 +191,6 @@ class GeneralisedIFT2Layer(nn.Module):
 
         self.learnable = learnable
         self.set_learnable(self.learnable)
-        self.shift = shift
 
         self.batch_norm = batch_norm
         if self.batch_norm:
@@ -160,16 +200,12 @@ class GeneralisedIFT2Layer(nn.Module):
     def forward(self, X):
         # input shape should be (batch_size, nc, nx, ny)
         batch_size = len(X)
-        # if self.shift:
-        #     X = fftshift(X,dim=(-2,-1))
         # first transform
         x_t = self.idft1(X)
 
-        # print('x_t shape:',x_t.shape)
-
         # reshape & transform
         x_t = x_t.reshape([batch_size, self.nch_int, self.nrow, self.ncol]).permute(0, 1, 3, 2)
-        # print('x_t shape2:',x_t.shape)
+
         if self.batch_norm:
             x_t = self.bn1(x_t.contiguous())
 
@@ -185,20 +221,11 @@ class GeneralisedIFT2Layer(nn.Module):
 
         # second transform
         x_t = self.idft2(x_t)
-        
         x_t = x_t.reshape([batch_size, self.nch_out, self.ncol, self.nrow]).permute(0, 1, 3, 2)
-        # print("X-t",x_t.shape)
 
         if self.batch_norm:
             x_t = self.bn2(x_t.contiguous())
 
-        # print("sh",x_t.shape)
-
-        # if (self.shift):
-        #     # return x_t
-        #     return fftshift(x_t,dim=(-2,-1))
-        # else:
-        #     return x_t
 
         return x_t
 
@@ -206,6 +233,59 @@ class GeneralisedIFT2Layer(nn.Module):
         self.learnable = flag
         self.idft1.weight.requires_grad = flag
         self.idft2.weight.requires_grad = flag
+
+
+
+
+# class AUTOMAP(nn.Module):
+#     """
+#     Pytorch implementation of AUTOMAP [1].
+
+#     Reference:
+#     ----------
+#     [1] Zhu et al., AUTOMAP, Nature 2018. <url:https://www.nature.com/articles/nature25988.pdf>
+#     """
+
+#     def __init__(self, input_shape, output_shape,
+#                  init_fc2_fourier=False,
+#                  init_fc3_fourier=False):
+#         super(AUTOMAP, self).__init__()
+#         self.input_shape = input_shape
+#         self.output_shape = output_shape
+#         self.ndim = input_shape[-1]
+
+#         # "Mapped to hidden layer of n^2, activated by tanh"
+#         self.input_reshape = int(np.prod(self.input_shape))
+#         self.output_reshape = int(np.prod(self.output_shape))
+
+#         self.domain_transform = nn.Linear(self.input_reshape, self.output_reshape)
+#         self.domain_transform2 = nn.Linear(self.output_reshape, self.output_reshape)
+
+#         if init_fc2_fourier or init_fc3_fourier:
+#             if input_shape != output_shape:
+#                 raise ValueError('To initialise the kernels with Fourier transform,'
+#                                  'the input and output shapes must be the same')
+
+#         if init_fc2_fourier:
+#             init_fourier_2d(input_shape[-2], input_shape[-1], self.domain_transform.weight)
+
+#         if init_fc3_fourier:
+#             init_fourier_2d(input_shape[-2], input_shape[-1], self.domain_transform2.weight)
+
+
+#         # Sparse convolutional autoencoder for further finetuning
+#         # See AUTOMAP paper
+#         self.sparse_convolutional_autoencoder = get_refinement_block('automap_scae', output_shape[0], output_shape[0])
+
+#     def forward(self, x):
+#         """Expects input_shape (batch_size, 2, ndim, ndim)"""
+#         batch_size = len(x)
+#         x = x.reshape(batch_size, int(np.prod(self.input_shape)))
+#         x = F.tanh(self.domain_transform(x))
+#         x = F.tanh(self.domain_transform2(x))
+#         x = x.reshape(-1, *self.output_shape)
+#         x = self.sparse_convolutional_autoencoder(x)
+#         return x
 
 
 class dAUTOMAP(nn.Module):
@@ -224,34 +304,65 @@ class dAUTOMAP(nn.Module):
 
         self.domain_transform = GeneralisedIFT2Layer(**tfx_params)
         self.domain_transform2 = GeneralisedIFT2Layer(**tfx_params2)
-        # print(self.domain_transform.init_fourier,self.domain_transform2.init_fourier)
         self.refinement_block = get_refinement_block('automap_scae', input_shape[0], output_shape[0])
 
-        # FIXME forced to residual always
-        self.refinement_block = ResidualForm(self.refinement_block)
-
-        # self.dcs = DataConsistencyInKspace(norm='ortho')
-
-    def forward(self, ksp):
+    def forward(self, x):
         """Assumes input to be (batch_size, 2, nrow, ncol)"""
-        # ksp0 = ksp.permute((0,1,3,2)).clone().detach().requires_grad_(True) # transpose kspace for fastmri (column masking)
-        ksp0 = ksp
-        # mask = (~(ksp0==0)).float()
-        x_mapped = self.domain_transform(ksp0)
-        # print("x_mapped",x_mapped.shape)
+        x_mapped = self.domain_transform(x)
         x_mapped = F.tanh(x_mapped)
         x_mapped2 = self.domain_transform2(x_mapped)
         x_mapped2 = F.tanh(x_mapped2)
-        out = self.refinement_block(x_mapped2) 
-
-        # return self.dcs(out+x_mapped2,ksp0,mask) #, x_mapped, x_mapped2
-        # FIXME: above is right"
-        # print("out_dautomp",out.shape)
-        
-        # return out.permute((0,1,3,2)),x_mapped # transpose back
-        
+        out = self.refinement_block(x_mapped2)
         return out
 
-        # return x_mapped #.permute((0,1,3,2)) # transpose back 
 
-        # return self.dcs(x_mapped,ksp0,mask)
+# class dAUTOMAPExt(nn.Module):
+#     """
+#     Pytorch implementation of dAUTOMAP with adjustable depth and nonlinearity
+
+#     Decomposes the automap kernel into 2 Generalised "1D" transforms to make it scalable.
+
+#     Parameters
+#     ----------
+
+#     input_shape: tuple (n_channel, nx, ny)
+
+#     output_shape: tuple (n_channel, nx, ny)
+
+#     depth: int (default: 2)
+
+#     tfx_params: list of dict or dict. If list of dict, it must provide the parameter for each. If dict, then the same parameter config will be shared for all the layers.
+
+
+#     """
+#     def __init__(self, input_shape, output_shape, tfx_params=None, depth=2, nl='tanh'):
+#         super(dAUTOMAPExt, self).__init__()
+#         self.input_shape = input_shape
+#         self.output_shape = output_shape
+#         self.depth = depth
+#         self.nl = nl
+
+#         # copy tfx_parameters
+#         domain_transforms = []
+#         if isinstance(tfx_params, list):
+#             if self.depth and self.depth != len(tfx_params):
+#                 raise ValueError('Depth and the length of tfx_params must be the same')
+#         else:
+#             tfx_params = [tfx_params] * self.depth
+
+#         # create domain transform layers
+#         for tfx_param in tfx_params:
+#             domain_transform = GeneralisedIFT2Layer(**tfx_param)
+#             domain_transforms.append(domain_transform)
+
+#         self.domain_transforms = nn.ModuleList(domain_transforms)
+#         self.refinement_block = get_refinement_block('automap_scae', input_shape[0], output_shape[0])
+
+#     def forward(self, x):
+#         """Assumes input to be (batch_size, 2, nrow, ncol)"""
+#         for i in range(self.depth):
+#             x = self.domain_transforms[i](x)
+#             x = getattr(F, self.nl)(x)
+
+#         out = self.refinement_block(x)
+#         return out
