@@ -37,3 +37,6 @@ def tensor_to_complex_np(data):
     """
     data = data.numpy()
     return data[..., 0] + 1j * data[..., 1]
+
+
+to_cplx = lambda  t,b=0 : t[b,0,:,:].cpu().detach().numpy()+1j*t[b,1,:,:].cpu().detach().numpy()

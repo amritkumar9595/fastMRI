@@ -2,6 +2,7 @@ import numpy as np
 
 from data import transforms
 
+import torch
 
 def randomflip(ksp):
     outcome = np.random.binomial(1,0.5,3)
@@ -39,6 +40,104 @@ class Augmentation:
         return transforms.to_tensor(randomflip(ksp_npy)*self.translation()).float()
 
 
+class C3Convert:
+    def __init__(self, shp=(320,320)):
+        self.c3m = transforms.c3_torch(shp) # ksp.shape[-2:]
+
+    def apply(self,ksp):
+        # expect (bat, w, h, 2)
+        return ksp * self.c3m
+
+
+# torch fft requires (bat, w,h, 2)
+
+ifft_c3 = lambda kspc3: torch.ifft(transforms.ifftshift(kspc3,dim=(-3,-2)),2,normalized=True)
+
+fft_c3 = lambda im: transforms.fftshift(torch.fft(im,2,normalized=True),dim=(-3,-2))
+
+class NoTransform:
+    def __init__(self):
+        pass
+
+    def __call__(self, kspace, target, attrs, fname, slice):
+        return kspace
+
+
+class SquareDataTransformC3:
+    def __init__(self, mask_func, resolution, which_challenge, use_seed=True, augment=True):
+        """
+        Args:
+            mask_func (common.subsample.MaskFunc): A function that can create a mask of
+                appropriate shape.
+            resolution (int): Resolution of the image.
+            which_challenge (str): Either "singlecoil" or "multicoil" denoting the dataset.
+            use_seed (bool): If true, this class computes a pseudo random number generator seed
+                from the filename. This ensures that the same mask is used for all the slices of
+                a given volume every time.
+        """
+        if which_challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.resolution = resolution
+        self.which_challenge = which_challenge
+        self.use_seed = use_seed
+
+        self.augmentation = None
+        if augment:
+            self.augmentation = Augmentation((self.resolution,self.resolution))
+                
+        self.c3object= C3Convert((self.resolution,self.resolution))
+
+
+    def __call__(self, kspace, target, attrs, fname, slice):
+        kspace_rect = transforms.to_tensor(kspace)   ##rectangular kspace
+
+        image_rect = transforms.ifft2(kspace_rect)    ##rectangular FS image
+        image_square = transforms.complex_center_crop(image_rect, (self.resolution, self.resolution))  ##cropped to FS square image
+        kspace_square = self.c3object.apply(transforms.fft2(image_square))  ##kspace of square iamge
+
+        if self.augmentation:
+            kspace_square = self.augmentation.apply(kspace_square)
+
+        image_square = ifft_c3(kspace_square)
+
+        # Apply mask
+        seed = None if not self.use_seed else tuple(map(ord, fname))        
+        masked_kspace_square, mask = transforms.apply_mask(kspace_square, self.mask_func, seed) ##ZF square kspace
+    
+        # Inverse Fourier Transform to get zero filled solution
+        # image = transforms.ifft2(masked_kspace)
+        image_square_us = ifft_c3(masked_kspace_square)   ## US square complex image
+
+        # Crop input image
+        # image = transforms.complex_center_crop(image, (self.resolution, self.resolution))
+        # Absolute value
+        # image = transforms.complex_abs(image)
+        image_square_abs = transforms.complex_abs(image_square_us)    ## US square real image
+        
+        # Apply Root-Sum-of-Squares if multicoil data
+        # if self.which_challenge == 'multicoil':
+        #     image = transforms.root_sum_of_squares(image)
+        # Normalize input
+        # image, mean, std = transforms.normalize_instance(image, eps=1e-11)
+        _, mean, std = transforms.normalize_instance(image_square_abs, eps=1e-11)
+        # image = image.clamp(-6, 6)
+        
+        # target = transforms.to_tensor(target)        
+        target = image_square.permute(2,0,1)
+        # Normalize target
+        # target = transforms.normalize(target, mean, std, eps=1e-11)
+        # target = target.clamp(-6, 6)    
+        # return image, target, mean, std, attrs['norm'].astype(np.float32)        
+
+        # return masked_kspace_square.permute((2,0,1)), image, image_square.permute(2,0,1), mean, std, attrs['norm'].astype(np.float32)
+
+        # ksp, zf, target, me, st, nor
+        return masked_kspace_square.permute((2,0,1)), image_square_us.permute((2,0,1)), \
+            target,  \
+            mean, std, attrs['norm'].astype(np.float32)
+
+            
 class SquareDataTransform:
     """
     Data Transformer for training U-Net models.
@@ -65,6 +164,7 @@ class SquareDataTransform:
         self.augmentation = None
         if augment:
             self.augmentation = Augmentation((self.resolution,self.resolution))
+           
 
     def __call__(self, kspace, target, attrs, fname, slice):
         """

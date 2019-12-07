@@ -240,3 +240,27 @@ def ifftshift(x, dim=None):
     else:
         shift = [(x.shape[i] + 1) // 2 for i in dim]
     return roll(x, shift, dim)
+
+
+def c3_multiplier_npy(shape=(320,320)):
+    shp = (shape[0],shape[1])
+
+    mul_mat=np.resize([1,-1],shp)
+    
+    return mul_mat * mul_mat.T
+
+
+def c3_torch(shp): 
+    c3m = c3_multiplier_npy(shp)
+    return torch.from_numpy(np.dstack((c3m,c3m))).float()
+    
+
+# # compatible with schlemper format (bat,ch,w,h)
+# def fftshift_alt(data, signal_ndim):
+#     ndims = len(data.size())
+#     startdim = ndims - (signal_ndim) # leave out batch and front padding dimensions
+    
+#     dims = list(range(startdim, startdim+signal_ndim))
+#     shifts = [data.size(dim)//2 for dim in dims]
+# #     print(dims,shifts)
+#     return torch.roll(data,shifts,dims=dims)

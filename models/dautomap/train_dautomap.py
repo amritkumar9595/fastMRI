@@ -28,12 +28,13 @@ from data.mri_data import SliceData
 # from models.unet.unet_model import UnetModel
 from models.dautomap.dautomap_model import dAUTOMAP
 from models.wrappers import ResidualForm, ModelWithDC
+from data import transforms
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-from data.my_transforms import SquareDataTransform
+from data.my_transforms import SquareDataTransformC3
 
 def create_datasets(args):
     train_mask = MaskFunc(args.center_fractions, args.accelerations)
@@ -41,13 +42,13 @@ def create_datasets(args):
 
     train_data = SliceData(
         root=args.data_path / f'{args.challenge}_train',
-        transform=SquareDataTransform(train_mask, args.resolution, args.challenge),
+        transform=SquareDataTransformC3(train_mask, args.resolution, args.challenge),
         sample_rate=args.sample_rate,
         challenge=args.challenge
     )
     dev_data = SliceData(
         root=args.data_path / f'{args.challenge}_val',
-        transform=SquareDataTransform(dev_mask, args.resolution, args.challenge, use_seed=True),
+        transform=SquareDataTransformC3(dev_mask, args.resolution, args.challenge, use_seed=True),
         sample_rate=args.sample_rate,
         challenge=args.challenge,
     )
@@ -86,12 +87,12 @@ def train_epoch(args, epoch, model, data_loader, optimizer, writer):
     start_epoch = start_iter = time.perf_counter()
     global_step = epoch * len(data_loader)
     for iter, data in enumerate(data_loader):
-        input, target, mean, std, norm = data
-        input = input.unsqueeze(1).to(args.device)
-        target = target.to(args.device)
+        ksp, input, target, mean, std, norm = data
+        # input = input.unsqueeze(1).to(args.device)
+        # target = target.to(args.device)
 
-        output = model(input).squeeze(1)
-        loss = F.l1_loss(output, target)
+        output = model(ksp.cuda(), ksp.cuda()) #.squeeze(1)
+        loss = F.l1_loss(output, target.cuda())
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -116,17 +117,20 @@ def evaluate(args, epoch, model, data_loader, writer):
     start = time.perf_counter()
     with torch.no_grad():
         for iter, data in enumerate(data_loader):
-            input, target, mean, std, norm = data
-            input = input.unsqueeze(1).to(args.device)
+            ksp,input, target, mean, std, norm = data
+            # input = input.unsqueeze(1).to(args.device)
             target = target.to(args.device)
-            output = model(input).squeeze(1)
-
+            output = model(ksp.cuda(), ksp.cuda()) #.squeeze(1)
+            
             mean = mean.unsqueeze(1).unsqueeze(2).to(args.device)
             std = std.unsqueeze(1).unsqueeze(2).to(args.device)
-            target = target * std + mean
-            output = output * std + mean
+            
+            # to be done only on magnitude
+            # target = target * std + mean
+            # output = output * std + mean
 
             norm = norm.unsqueeze(1).unsqueeze(2).to(args.device)
+            norm = 1 # can't divide directly with complex
             loss = F.mse_loss(output / norm, target / norm, size_average=False)
             losses.append(loss.item())
         writer.add_scalar('Dev_Loss', np.mean(losses), epoch)
@@ -143,13 +147,14 @@ def visualize(args, epoch, model, data_loader, writer):
     model.eval()
     with torch.no_grad():
         for iter, data in enumerate(data_loader):
-            input, target, mean, std, norm = data
-            input = input.unsqueeze(1).to(args.device)
-            target = target.unsqueeze(1).to(args.device)
-            output = model(input)
-            save_image(target, 'Target')
-            save_image(output, 'Reconstruction')
-            save_image(torch.abs(target - output), 'Error')
+            ksp,input, target, mean, std, norm = data
+            # input = input.unsqueeze(1).to(args.device)
+            target = target.to(args.device)
+            output = model(ksp.cuda(),ksp.cuda())
+            #FIXME - not ready yet
+            # save_image(transforms.complex_abs(target.permute((0,2,3,1))), 'Target')
+            # save_image(transforms.complex_abs(output.permute((0,2,3,1))), 'Reconstruction')
+            # save_image(torch.abs(target - output), 'Error')
             break
 
 
@@ -197,8 +202,7 @@ def build_dautomap(args):
         'init': 'xavier_uniform_',
         'bias': False, #True,
         'share_tfxs': False,
-        'learnable': True,
-        'shift': True
+        'learnable': True
       },
       'tfx_params2': {
         'nrow': patch_size,
@@ -210,8 +214,7 @@ def build_dautomap(args):
         'init': 'xavier_uniform_',
         'bias':True,
         'share_tfxs': False,
-        'learnable': True,
-        'shift': False
+        'learnable': True
       },
       'depth': 2,
       'nl':'relu'
