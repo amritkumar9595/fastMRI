@@ -62,7 +62,9 @@ class SquareDataTransform:
         self.which_challenge = which_challenge
         self.use_seed = use_seed
 
-        self.augmentation = Augmentation((self.resolution,self.resolution))
+        self.augmentation = None
+        if augment:
+            self.augmentation = Augmentation((self.resolution,self.resolution))
 
     def __call__(self, kspace, target, attrs, fname, slice):
         """
@@ -81,65 +83,47 @@ class SquareDataTransform:
                 std (float): Standard deviation value used for normalization.
                 norm (float): L2 norm of the entire volume.
         """
-        ## converting the given data to tensors
-        # target = transforms.to_tensor(target)
         kspace_rect = transforms.to_tensor(kspace)   ##rectangular kspace
 
-        seed = None if not self.use_seed else tuple(map(ord, fname))
-        # print("shape",kspace_rect.shape)
         image_rect = transforms.ifft2(kspace_rect)    ##rectangular FS image
         image_square = transforms.complex_center_crop(image_rect, (self.resolution, self.resolution))  ##cropped to FS square image
-        kspace_square = transforms.fft2(image_square)*10000  ##kspace of square iamge
+        kspace_square = transforms.fft2(image_square)  ##kspace of square iamge
 
-        kspace_square = self.augmentation.apply(kspace_square)
-        image_square = transforms.ifft2(kspace_square)
+        if self.augmentation:
+            kspace_square = self.augmentation.apply(kspace_square)
+            image_square = transforms.ifft2(kspace_square)
 
+        # Apply mask
+        seed = None if not self.use_seed else tuple(map(ord, fname))        
         masked_kspace_square, mask = transforms.apply_mask(kspace_square, self.mask_func, seed) ##ZF square kspace
-        image_square_us = transforms.ifft2(masked_kspace_square)   ## US square complex image
-        image_square_abs = transforms.complex_abs(image_square_us)    ## US square real image
-
-        ## normalizing 
-        image, mean, std = transforms.normalize_instance(image_square_abs/10000, eps=1e-11)
-        # target = transforms.normalize(target, mean, std, eps=1e-11)
-        
-        ## clamp
-        # image = image.clamp(-6, 6)
-        # target = target.clamp(-6, 6)
-        # masked_kspace_square = masked_kspace_square.clamp(-6,6)
-
-
-        # print("kspace",masked_kspace_square.shape)
-        # print("imagemax",torch.max(image))
-        # print("imagemin",torch.min(image))
-        # print("target",target.shape)
-        
     
         # Inverse Fourier Transform to get zero filled solution
-        
-        # Crop input image
-        
-        
-        # print("masked_kspace_crop",masked_kspace_crop.shape)
-        
-        # Absolute value
+        # image = transforms.ifft2(masked_kspace)
+        image_square_us = transforms.ifft2(masked_kspace_square)   ## US square complex image
 
+        # Crop input image
+        # image = transforms.complex_center_crop(image, (self.resolution, self.resolution))
+        # Absolute value
         # image = transforms.complex_abs(image)
+        image_square_abs = transforms.complex_abs(image_square_us)    ## US square real image
+        
         # Apply Root-Sum-of-Squares if multicoil data
         # if self.which_challenge == 'multicoil':
         #     image = transforms.root_sum_of_squares(image)
         # Normalize input
         # image, mean, std = transforms.normalize_instance(image, eps=1e-11)
+        _, mean, std = transforms.normalize_instance(image_square_abs, eps=1e-11)
+        # image = image.clamp(-6, 6)
         
-        # print("image_shape",image.shape)
-
-        
+        # target = transforms.to_tensor(target)        
+        target = image_square.permute(2,0,1)
         # Normalize target
         # target = transforms.normalize(target, mean, std, eps=1e-11)
-    
-        # )
-        target = image_square.permute(2,0,1)
+        # target = target.clamp(-6, 6)    
+        # return image, target, mean, std, attrs['norm'].astype(np.float32)        
 
         # return masked_kspace_square.permute((2,0,1)), image, image_square.permute(2,0,1), mean, std, attrs['norm'].astype(np.float32)
+
         # ksp, zf, target, me, st, nor
         return masked_kspace_square.permute((2,0,1)), image_square_us.permute((2,0,1)), \
             target,  \
