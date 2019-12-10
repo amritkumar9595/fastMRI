@@ -229,19 +229,21 @@ def build_dautomap(args):
     return model
 
 def build_model(args):
-    dautomap_model = build_dautomap(args)
+    model = build_dautomap(args)
     # unet_model = UnetModel(in_chans=2,out_chans=2,chans=args.num_chans,
     #     num_pool_layers=args.num_pools,
     #     drop_prob=args.drop_prob)
-
-    resmodel = ResidualForm(dautomap_model)
-    withdcs = ModelWithDC(resmodel)
+    print(args)
+    if args.residual:
+        model = ResidualForm(model)
+    if args.dcblock:
+        model = ModelWithDC(model)
 
     # dualencoderunet_model = build_dualencoderunet(args)
     # model = dAUTOMAPDualEncoderUnet(dautomap_model,dualencoderunet_model).to(args.device)
     # model = dautomap_model
-    model = withdcs.to(args.device)
-    return model
+    return model.to(args.device)
+    # return model
 
 
 def load_model(checkpoint_file):
@@ -303,9 +305,12 @@ def main(args):
 
 def create_arg_parser():
     parser = Args()
-    parser.add_argument('--num-pools', type=int, default=4, help='Number of U-Net pooling layers')
-    parser.add_argument('--drop-prob', type=float, default=0.0, help='Dropout probability')
-    parser.add_argument('--num-chans', type=int, default=32, help='Number of U-Net channels')
+    # parser.add_argument('--num-pools', type=int, default=4, help='Number of U-Net pooling layers')
+    # parser.add_argument('--drop-prob', type=float, default=0.0, help='Dropout probability')
+    # parser.add_argument('--num-chans', type=int, default=32, help='Number of U-Net channels')
+
+    parser.add_argument('--residual', default=True, help='residual')
+    parser.add_argument('--dcblock', default=False, help='data consistency block')
 
     parser.add_argument('--batch-size', default=16, type=int, help='Mini batch size')
     parser.add_argument('--num-epochs', type=int, default=50, help='Number of training epochs')
