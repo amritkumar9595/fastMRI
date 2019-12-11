@@ -94,7 +94,7 @@ class SquareDataTransformC3:
 
         image_rect = transforms.ifft2(kspace_rect)    ##rectangular FS image
         image_square = transforms.complex_center_crop(image_rect, (self.resolution, self.resolution))  ##cropped to FS square image
-        kspace_square = self.c3object.apply(transforms.fft2(image_square))  ##kspace of square iamge
+        kspace_square = self.c3object.apply(transforms.fft2(image_square))*10000  ##kspace of square iamge
 
         if self.augmentation:
             kspace_square = self.augmentation.apply(kspace_square)

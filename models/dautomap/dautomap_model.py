@@ -309,9 +309,9 @@ class dAUTOMAP(nn.Module):
     def forward(self, x):
         """Assumes input to be (batch_size, 2, nrow, ncol)"""
         x_mapped = self.domain_transform(x)
-        x_mapped = F.tanh(x_mapped)
+        # x_mapped = F.tanh(x_mapped)
         x_mapped2 = self.domain_transform2(x_mapped)
-        x_mapped2 = F.tanh(x_mapped2)
+        # x_mapped2 = F.tanh(x_mapped2)
         out = self.refinement_block(x_mapped2)
         return out
 
