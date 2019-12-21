@@ -8,6 +8,17 @@ LICENSE file in the root directory of this source tree.
 import numpy as np
 import torch
 
+def arc_masking_func(shape,seed):
+    mask = np.ones((shape[1],))
+    mask[::2]=0
+
+    # Reshape the mask
+    mask_shape = [1 for _ in shape]
+    mask_shape[-2] = shape[-2]
+    mask = torch.from_numpy(mask.reshape(*mask_shape).astype(np.float32))
+
+    return mask
+
 
 class MaskFunc:
     """

@@ -22,7 +22,7 @@ import sys, os
 sys.path.append(os.getcwd())
 
 from common.args import Args
-from common.subsample import MaskFunc
+from common.subsample import MaskFunc,arc_masking_func
 
 from data.mri_data import SliceData
 # from models.unet.unet_model import UnetModel
@@ -34,7 +34,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-from data.my_transforms import SquareDataTransformC3
+from data.my_transforms import SquareDataTransformC3_multi
+
+def create_datasets_multi(args):
+    train_mask = arc_masking_func
+    dev_mask = arc_masking_func
+
+    train_data = SliceData(
+        root=args.data_path / f'{args.challenge}_train',
+        transform=SquareDataTransformC3_multi(train_mask, args.resolution, args.challenge),
+        sample_rate=args.sample_rate,
+        challenge=args.challenge
+    )
+    dev_data = SliceData(
+        root=args.data_path / f'{args.challenge}_val',
+        transform=SquareDataTransformC3_multi(dev_mask, args.resolution, args.challenge, use_seed=True),
+        sample_rate=args.sample_rate,
+        challenge=args.challenge,
+    )
+    return dev_data, train_data
 
 def create_datasets(args):
     train_mask = MaskFunc(args.center_fractions, args.accelerations)
@@ -42,13 +60,13 @@ def create_datasets(args):
 
     train_data = SliceData(
         root=args.data_path / f'{args.challenge}_train',
-        transform=SquareDataTransformC3(train_mask, args.resolution, args.challenge),
+        transform=SquareDataTransformC3_multi(train_mask, args.resolution, args.challenge),
         sample_rate=args.sample_rate,
         challenge=args.challenge
     )
     dev_data = SliceData(
         root=args.data_path / f'{args.challenge}_val',
-        transform=SquareDataTransformC3(dev_mask, args.resolution, args.challenge, use_seed=True),
+        transform=SquareDataTransformC3_multi(dev_mask, args.resolution, args.challenge, use_seed=True),
         sample_rate=args.sample_rate,
         challenge=args.challenge,
     )
@@ -56,8 +74,8 @@ def create_datasets(args):
 
 
 def create_data_loaders(args):
-    dev_data, train_data = create_datasets(args)
-    display_data = [dev_data[i] for i in range(0, len(dev_data), len(dev_data) // 16)]
+    dev_data, train_data = create_datasets_multi(args)
+    # display_data = [dev_data[i] for i in range(0, len(dev_data), len(dev_data) // 16)]
 
     train_loader = DataLoader(
         dataset=train_data,
@@ -72,13 +90,15 @@ def create_data_loaders(args):
         num_workers=8,
         pin_memory=True,
     )
+    '''
     display_loader = DataLoader(
         dataset=display_data,
         batch_size=16,
         num_workers=8,
         pin_memory=True,
     )
-    return train_loader, dev_loader, display_loader
+    '''
+    return train_loader, dev_loader#, display_loader
 
 
 def train_epoch(args, epoch, model, data_loader, optimizer, writer):
@@ -190,15 +210,15 @@ def build_dautomap(args):
 
     patch_size = args.resolution
     model_params = {
-      'input_shape': (2, patch_size, patch_size),
-      'output_shape': (2, patch_size, patch_size),
+      'input_shape': (30, patch_size, patch_size),
+      'output_shape': (1, patch_size, patch_size),
       'tfx_params': {
         'nrow': patch_size,
         'ncol': patch_size,
-        'nch_in': 2,
+        'nch_in': 30,
         'kernel_size': 1,
         'nl': None,
-        'init_fourier': True,
+        'init_fourier': False,
         'init': 'xavier_uniform_',
         'bias': False, #True,
         'share_tfxs': False,
@@ -207,7 +227,7 @@ def build_dautomap(args):
       'tfx_params2': {
         'nrow': patch_size,
         'ncol': patch_size,
-        'nch_in': 2,
+        'nch_in': 30,
         'kernel_size': 1,
         'nl': 'relu',
         'init_fourier': False,

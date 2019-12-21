@@ -94,7 +94,7 @@ class SquareDataTransformC3:
 
         image_rect = transforms.ifft2(kspace_rect)    ##rectangular FS image
         image_square = transforms.complex_center_crop(image_rect, (self.resolution, self.resolution))  ##cropped to FS square image
-        kspace_square = self.c3object.apply(transforms.fft2(image_square))*10000  ##kspace of square iamge
+        kspace_square = self.c3object.apply(transforms.fft2(image_square)) #* 10000  ##kspace of square iamge
 
         if self.augmentation:
             kspace_square = self.augmentation.apply(kspace_square)
@@ -136,6 +136,139 @@ class SquareDataTransformC3:
         return masked_kspace_square.permute((2,0,1)), image_square_us.permute((2,0,1)), \
             target,  \
             mean, std, attrs['norm'].astype(np.float32)
+
+
+class SquareDataTransformC3_multi:
+    def __init__(self, mask_func, resolution, which_challenge, use_seed=True, augment=False): #default should b true!
+        """
+        Args:
+            mask_func (common.subsample.MaskFunc): A function that can create a mask of
+                appropriate shape.
+            resolution (int): Resolution of the image.
+            which_challenge (str): Either "singlecoil" or "multicoil" denoting the dataset.
+            use_seed (bool): If true, this class computes a pseudo random number generator seed
+                from the filename. This ensures that the same mask is used for all the slices of
+                a given volume every time.
+        """
+        if which_challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.resolution = resolution
+        self.which_challenge = which_challenge
+        self.use_seed = use_seed
+
+        self.augmentation = None
+        if augment:
+            self.augmentation = Augmentation((self.resolution,self.resolution))
+                
+        self.c3object= C3Convert((self.resolution,self.resolution))
+
+
+    def __call__(self, kspace, target, attrs, fname, slice):
+        kspace_rect = transforms.to_tensor(kspace)   ##rectangular kspace
+        
+        image_rect = transforms.ifft2(kspace_rect)    ##rectangular FS image
+        image_square = transforms.complex_center_crop(image_rect, (self.resolution, self.resolution))  ##cropped to FS square image
+        
+
+        kspace_square = self.c3object.apply(transforms.fft2(image_square)) * 10000  ##kspace of square iamge
+        image_square2 = ifft_c3(kspace_square)   ##for training domain_transform
+
+        if self.augmentation:
+            kspace_square = self.augmentation.apply(kspace_square)
+
+        # image_square = ifft_c3(kspace_square)
+
+        # Apply mask
+        seed = None if not self.use_seed else tuple(map(ord, fname))        
+        masked_kspace_square, mask = transforms.apply_mask(kspace_square, self.mask_func, seed) ##ZF square kspace
+
+    
+        # Inverse Fourier Transform to get zero filled solution
+        # image = transforms.ifft2(masked_kspace)
+        us_image_square = ifft_c3(masked_kspace_square)   ## US square complex image
+
+        # Crop input image
+        # image = transforms.complex_center_crop(image, (self.resolution, self.resolution))
+        # Absolute value
+        # image = transforms.complex_abs(image)
+        us_image_square_abs = transforms.complex_abs(us_image_square)    ## US square real image
+        us_image_square_rss = transforms.root_sum_of_squares(us_image_square_abs , dim=0)
+
+        stacked_kspace_square = []
+        for i in (range(len(kspace_square[:,0,0,0]))):
+            stacked_kspace_square.append(kspace_square[i,:,:,0])
+            stacked_kspace_square.append(kspace_square[i,:,:,1])
+        
+        stacked_kspace_square = torch.stack(stacked_kspace_square)
+
+        stacked_masked_kspace_square = []
+        # masked_kspace_square = transforms.to_tensor(masked_kspace_square)
+        # for i in range(len(masked_kspace_square[:,0,0,0])):
+            # stacked_masked_kspace_square.stack(masked_kspace_square[i,:,:,0],masked_kspace_square[i,:,:,1])
+
+        for i in (range(len(masked_kspace_square[:,0,0,0]))):
+            stacked_masked_kspace_square.append(masked_kspace_square[i,:,:,0])
+            stacked_masked_kspace_square.append(masked_kspace_square[i,:,:,1])
+        
+        stacked_masked_kspace_square = torch.stack(stacked_masked_kspace_square)
+
+        stacked_image_square = []
+        for i in (range(len(image_square[:,0,0,0]))):
+            stacked_image_square.append(image_square2[i,:,:,0])
+            stacked_image_square.append(image_square2[i,:,:,1])
+        
+        stacked_image_square = torch.stack(stacked_image_square)
+
+
+
+
+        return stacked_kspace_square,stacked_masked_kspace_square , stacked_image_square , \
+            us_image_square_rss ,   \
+            target *10000 \
+            #mean, std, attrs['norm'].astype(np.float32)
+        
+
+
+
+
+        
+
+
+
+
+
+
+
+        
+
+
+
+
+        '''
+        # Apply Root-Sum-of-Squares if multicoil data
+        # if self.which_challenge == 'multicoil':
+        #     image = transforms.root_sum_of_squares(image)
+        # Normalize input
+        # image, mean, std = transforms.normalize_instance(image, eps=1e-11)
+        _, mean, std = transforms.normalize_instance(image_square_abs, eps=1e-11)
+        # image = image.clamp(-6, 6)
+        
+        # target = transforms.to_tensor(target)        
+        target = image_square.permute(2,0,1)
+        # Normalize target
+        # target = transforms.normalize(target, mean, std, eps=1e-11)
+        # target = target.clamp(-6, 6)    
+        # return image, target, mean, std, attrs['norm'].astype(np.float32)        
+
+        # return masked_kspace_square.permute((2,0,1)), image, image_square.permute(2,0,1), mean, std, attrs['norm'].astype(np.float32)
+
+        # ksp, zf, target, me, st, nor
+        return masked_kspace_square.permute((2,0,1)), image_square_us.permute((2,0,1)), \
+            target,  \
+            mean, std, attrs['norm'].astype(np.float32)
+            '''
+
 
             
 class SquareDataTransform:
