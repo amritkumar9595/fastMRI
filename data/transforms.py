@@ -253,6 +253,30 @@ def c3_multiplier_npy(shape=(320,320)):
 def c3_torch(shp): 
     c3m = c3_multiplier_npy(shp)
     return torch.from_numpy(np.dstack((c3m,c3m))).float()
+
+
+
+def stack_to_rss(img_stack):
+    img_stack_1 = img_stack[:,list(range(0,30,2)),:,:]
+    img_stack_2 = img_stack[:,list(range(1,30,2)),:,:]
+    img_stack_3 = (img_stack_1 **2 + img_stack_2 **2)
+    img_stack4  = torch.sqrt(torch.sum(img_stack_3,dim=1))
+    return img_stack4
+
+def stack_to_chans(inp):
+    ## converts tensor of shape(bs,30,320,320) to tensor of shape(bs,15,320,320,2)
+    ## useful for applying fft2 and ifft2 which demands last dim=2
+    
+    stack_1 = inp[:,list(range(0,30,2)),:,:]
+    stack_2 = inp[:,list(range(1,30,2)),:,:] 
+    
+    stack_0 = torch.stack((stack_1,stack_2),dim = -1)
+
+    return stack_0
+
+
+     
+
     
 
 # # compatible with schlemper format (bat,ch,w,h)
