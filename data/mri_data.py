@@ -56,3 +56,19 @@ class SliceData(Dataset):
             kspace = data['kspace'][slice]
             target = data[self.recons_key][slice] if self.recons_key in data else None
             return self.transform(kspace, target, data.attrs, fname.name, slice)
+
+
+class SliceData2(Dataset):
+    def __init__(self,root,transform,challenge,sample_rate):
+        self.examples = list(pathlib.Path(root).iterdir())
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self,ii):
+        kspace = None
+        with h5py.File(self.examples[ii],'r') as data:
+            kspace = data['kspace'][()]
+        return self.transform(kspace,None,None,self.examples[ii].name,ii)
+

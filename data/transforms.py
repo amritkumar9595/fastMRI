@@ -25,6 +25,10 @@ def to_tensor(data):
     return torch.from_numpy(data)
 
 
+def apply_mask2(data, mask_func, seed=None):
+    mask = mask_func(data.shape,seed)
+    return torch.where(mask==0, torch.Tensor([0]),data),mask
+
 def apply_mask(data, mask_func, seed=None):
     """
     Subsample given k-space by multiplying with a mask.

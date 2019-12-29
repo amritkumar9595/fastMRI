@@ -4,6 +4,7 @@ from data import transforms
 
 import torch
 
+
 def randomflip(ksp):
     outcome = np.random.binomial(1,0.5,3)
     # print(outcome)
@@ -61,6 +62,35 @@ class NoTransform:
 
     def __call__(self, kspace, target, attrs, fname, slice):
         return kspace
+
+
+class BasicMaskingTransform:
+    
+    def __init__(self, mask_func, resolution, which_challenge, use_seed=True, augment=True):
+        self.mask_func = mask_func
+        self.use_seed = use_seed
+        #self.resolution = resolution
+
+
+    def __call__(self, kspace, target, attrs, fname, slice):
+        kspace_square = transforms.to_tensor(kspace)   ##kspace
+        image_square = ifft_c3(kspace_square)
+
+        seed = None if not self.use_seed else tuple(map(ord, fname))        
+        masked_kspace_square, mask = transforms.apply_mask2(kspace_square, self.mask_func, seed) ##ZF square kspace
+        image_square_us = ifft_c3(masked_kspace_square)   ## US square complex imagea
+        sz = kspace_square.size
+        stacked_kspace_square = kspace_square.permute((0,3,1,2)).reshape((-1,sz(-3),sz(-2)))
+        stacked_masked_kspace_square = masked_kspace_square.permute((0,3,1,2)).reshape((-1,sz(-3),sz(-2)))
+
+        stacked_image_square = image_square.permute((0,3,1,2)).reshape((-1,sz(-3),sz(-2)))
+        us_image_square_rss = torch.sqrt(torch.sum(image_square_us**2,dim=(0,-1)))
+        image_square_rss = torch.sqrt(torch.sum(image_square**2,dim=(0,-1)))
+
+        return stacked_kspace_square,stacked_masked_kspace_square , stacked_image_square , \
+            us_image_square_rss ,   \
+            image_square_rss 
+            #target *10000 \
 
 
 class SquareDataTransformC3:
