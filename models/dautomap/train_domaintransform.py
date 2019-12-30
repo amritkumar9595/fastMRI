@@ -13,7 +13,7 @@ Fourier Initialisation of the domain_transform layer of the dAutomap
 import logging
 import pathlib
 import random
-import shutil
+# import shutil
 import time
 
 import numpy as np
@@ -26,6 +26,8 @@ except:
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
+from common.utils import save_model
+
 import sys, os
 sys.path.append(os.getcwd())
 
@@ -34,8 +36,8 @@ from common.subsample import MaskFunc2,no_masking_func, arc_masking_func
 
 from data.mri_data import SliceData2
 # from models.unet.unet_model import UnetModel
-from models.dautomap.dautomap_model import dAUTOMAP
-from models.wrappers import ResidualForm, ModelWithDC
+from models.dautomap.dautomap_model import dAUTOMAP, GeneralisedIFT2Layer
+# from models.wrappers import ResidualForm, ModelWithDC
 from data import transforms
 from tqdm import tqdm
 # from data.transforms import stack_to_rss, stack_to_chans
@@ -119,19 +121,17 @@ def train_epoch(args, epoch, model, data_loader, optimizer, writer):
     global_step = epoch * len(data_loader)
     for iter, data in (enumerate(tqdm(data_loader))):
 
-        stacked_kspace_square, _, _, stacked_image_square = data
+        stacked_kspace_square, _, stacked_image_square, _, _ = data
         # input = input.unsqueeze(1).to(args.device)
         # target = target.to(args.device)
         ksp_shifted_mc = transforms.ifftshift(stacked_kspace_square,dim=(-2,-1))
         output = model(ksp_shifted_mc.cuda()) #.squeeze(1)
-        print("output",output.shape)
-        out_chans = stack_to_chans(output)
-        out_ksp = transforms.fft2(out_chans)
+        # print("output",output.shape)
+        # out_chans = stack_to_chans(output)
+        # out_ksp = transforms.fft2(out_chans)
        
-        print("out_chans",out_ksp.shape)
+        # print("out_chans",out_ksp.shape)
 
-
-        
         loss = F.l1_loss(output, stacked_image_square.cuda(),reduction = 'sum')
         optimizer.zero_grad()
         loss.backward()
@@ -158,10 +158,10 @@ def evaluate(args, epoch, model, data_loader, writer):
     start = time.perf_counter()
     with torch.no_grad():
         for iter, data in enumerate(tqdm(data_loader)):
-            stacked_kspace_square, _, _, stacked_image_square = data
+            stacked_kspace_square, _, stacked_image_square, _, _ = data
             # input = input.unsqueeze(1).to(args.device)
-            
-            output = model(stacked_kspace_square.cuda()) #.squeeze(1)
+            ksp_shifted_mc = transforms.ifftshift(stacked_kspace_square,dim=(-2,-1))            
+            output = model(ksp_shifted_mc.cuda()) #.squeeze(1)
             
             # mean = mean.unsqueeze(1).unsqueeze(2).to(args.device)
             # std = std.unsqueeze(1).unsqueeze(2).to(args.device)
@@ -174,11 +174,13 @@ def evaluate(args, epoch, model, data_loader, writer):
             # norm = 1 # can't divide directly with complex
             # loss = F.mse_loss(output , target / norm, size_average=False)
 
-            loss = F.mse_loss(output,stacked_kspace_square.cuda(),reduction = 'sum')
+            loss = F.mse_loss(output,stacked_image_square.cuda(),reduction = 'sum')
             losses.append(loss.item())
-        writer.add_scalar('Dev_Loss', np.mean(losses), epoch)
+        if writer is not None:
+            writer.add_scalar('Dev_Loss', np.mean(losses), epoch)
     return np.mean(losses), time.perf_counter() - start
 
+stack_to_rss = lambda stk: torch.sqrt(torch.sum(stk**2,dim=(1,))).unsqueeze(1)
 
 def visualize(args, epoch, model, data_loader, writer):
     def save_image(image, tag):
@@ -191,17 +193,18 @@ def visualize(args, epoch, model, data_loader, writer):
     with torch.no_grad():
         for iter, data in enumerate(data_loader):
 
-            stacked_kspace_square, _, _, stacked_image_square = data
+            stacked_kspace_square, _, stacked_image_square, _, _ = data
             # ksp,input, target, mean, std, norm = data
             # input = input.unsqueeze(1).to(args.device)
             # target = target.to(args.device)
             # target = target.unsqueeze(1)
             # print("target",target.shape)
-            output = model(stacked_kspace_square.cuda())
+            ksp_shifted_mc = transforms.ifftshift(stacked_kspace_square,dim=(-2,-1))            
+            output = model(ksp_shifted_mc.cuda())
             # print("output",output.shape)
             output_rss = stack_to_rss(output)
-            output_rss = output_rss.unsqueeze(1)
-            target = stack_to_rss(stacked_image_square).unsqueeze(1)
+            # output_rss = output_rss.unsqueeze(1)
+            target = stack_to_rss(stacked_image_square)#.unsqueeze(1)
             # print("output_rss",output_rss.shape)
             
 
@@ -212,32 +215,6 @@ def visualize(args, epoch, model, data_loader, writer):
             break
 
 
-def save_model(args, exp_dir, epoch, model, optimizer, best_dev_loss, is_new_best):
-    torch.save(
-        {
-            'epoch': epoch,
-            'args': args,
-            'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'best_dev_loss': best_dev_loss,
-            'exp_dir': exp_dir
-        },
-        f=exp_dir / 'model.pt'
-    )
-    if is_new_best:
-        shutil.copyfile(exp_dir / 'model.pt', exp_dir / 'best_model.pt')
-
-
-# def build_model(args):
-#     model = UnetModel(
-#         in_chans=1,
-#         out_chans=1,
-#         chans=args.num_chans,
-#         num_pool_layers=args.num_pools,
-#         drop_prob=args.drop_prob
-#     ).to(args.device)
-#     return model
-
 def build_dautomap(args):
     # checkpoint = torch.load(checkpoint_file)
     # args = checkpoint['args']
@@ -245,7 +222,7 @@ def build_dautomap(args):
     patch_size = args.resolution
     model_params = {
       'input_shape': (30, patch_size, patch_size),
-      'output_shape': (1, patch_size, patch_size),
+      'output_shape': (30, patch_size, patch_size),
       'tfx_params': {
         'nrow': patch_size,
         'ncol': patch_size,
@@ -282,6 +259,16 @@ def build_dautomap(args):
     # model.load_state_dict(checkpoint['model'])
     return model
 
+def multicoil_fourier_init(args,mdl):
+    mdl0 = GeneralisedIFT2Layer(args.resolution,args.resolution,2)
+    ncoils = 15 # FIXME: can come from args
+    n1 = 2*args.resolution
+    for ii in range(ncoils):
+        d1 = ii*n1
+        d2 = ii*2
+        mdl.idft1.weight.data[d1:d1+n1,d2:d2+2,:,:]=mdl0.idft1.weight.data[:,:,:,:]
+        mdl.idft2.weight.data[d1:d1+n1,d2:d2+2,:,:]=mdl0.idft2.weight.data[:,:,:,:]
+
 def build_model(args):
     model = build_dautomap(args)
     # unet_model = UnetModel(in_chans=2,out_chans=2,chans=args.num_chans,
@@ -296,9 +283,9 @@ def build_model(args):
     # dualencoderunet_model = build_dualencoderunet(args)
     # model = dAUTOMAPDualEncoderUnet(dautomap_model,dualencoderunet_model).to(args.device)
     # model = dautomap_model
-    mdl = model.domain_transform  ## taking the domain _transform part only!!
+    multicoil_fourier_init(args, model.domain_transform)  ## taking the domain _transform part only!!
 
-    return mdl.to(args.device)
+    return model.to(args.device)
     # return model
 
 

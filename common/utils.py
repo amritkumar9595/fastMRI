@@ -8,6 +8,10 @@ import json
 
 import h5py
 
+import shutil
+
+import torch
+
 
 def save_reconstructions(reconstructions, out_dir):
     """
@@ -40,3 +44,19 @@ def tensor_to_complex_np(data):
 
 
 to_cplx = lambda  t,b=0 : t[b,0,:,:].cpu().detach().numpy()+1j*t[b,1,:,:].cpu().detach().numpy()
+
+def save_model(args, exp_dir, epoch, model, optimizer, best_dev_loss, is_new_best):
+    torch.save(
+        {
+            'epoch': epoch,
+            'args': args,
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'best_dev_loss': best_dev_loss,
+            'exp_dir': exp_dir
+        },
+        f=exp_dir / 'model.pt'
+    )
+    if is_new_best:
+        shutil.copyfile(exp_dir / 'model.pt', exp_dir / 'best_model.pt')
+
