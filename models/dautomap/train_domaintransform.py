@@ -19,7 +19,10 @@ import time
 import numpy as np
 import torch
 import torchvision
-from tensorboardX import SummaryWriter
+try:
+    from tensorboardX import SummaryWriter
+except:
+    pass
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
@@ -27,58 +30,58 @@ import sys, os
 sys.path.append(os.getcwd())
 
 from common.args import Args
-from common.subsample import MaskFunc,arc_masking_func
+from common.subsample import MaskFunc2,no_masking_func, arc_masking_func
 
-from data.mri_data import SliceData
+from data.mri_data import SliceData2
 # from models.unet.unet_model import UnetModel
 from models.dautomap.dautomap_model import dAUTOMAP
 from models.wrappers import ResidualForm, ModelWithDC
 from data import transforms
 from tqdm import tqdm
-from data.transforms import stack_to_rss, stack_to_chans
+# from data.transforms import stack_to_rss, stack_to_chans
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-from data.my_transforms import SquareDataTransformC3_multi 
+from data.my_transforms import BasicMaskingTransform # SquareDataTransformC3_multi 
 
 def create_datasets_multi(args):
-    train_mask = arc_masking_func
-    dev_mask = arc_masking_func
+    train_mask = MaskFunc2(arc_masking_func, 15, (args.resolution, args.resolution),4)
+    dev_mask = MaskFunc2(arc_masking_func, 15, (args.resolution, args.resolution),4)
 
-    train_data = SliceData(
-        root=args.data_path / f'{args.challenge}_train',
-        transform=SquareDataTransformC3_multi(train_mask, args.resolution, args.challenge),
+    train_data = SliceData2(
+        root=args.data_path / f'{args.challenge}_train2',
+        transform=BasicMaskingTransform(train_mask, args.resolution, args.challenge),
         sample_rate=args.sample_rate,
         challenge=args.challenge
     )
-    dev_data = SliceData(
-        root=args.data_path / f'{args.challenge}_val',
-        transform=SquareDataTransformC3_multi(dev_mask, args.resolution, args.challenge, use_seed=True),
+    dev_data = SliceData2(
+        root=args.data_path / f'{args.challenge}_val2',
+        transform=BasicMaskingTransform(dev_mask, args.resolution, args.challenge, use_seed=True),
         sample_rate=args.sample_rate,
         challenge=args.challenge,
     )
     return dev_data, train_data
 
-def create_datasets(args):
-    train_mask = MaskFunc(args.center_fractions, args.accelerations)
-    dev_mask = MaskFunc(args.center_fractions, args.accelerations)
+# def create_datasets(args):
+#     train_mask = MaskFunc(args.center_fractions, args.accelerations)
+#     dev_mask = MaskFunc(args.center_fractions, args.accelerations)
 
-    train_data = SliceData(
-        root=args.data_path / f'{args.challenge}_train',
-        transform=SquareDataTransformC3_multi(train_mask, args.resolution, args.challenge),
-        sample_rate=args.sample_rate,
-        challenge=args.challenge
-    )
-    dev_data = SliceData(
-        root=args.data_path / f'{args.challenge}_val',
-        transform=SquareDataTransformC3_multi(dev_mask, args.resolution, args.challenge, use_seed=True),
-        sample_rate=args.sample_rate,
-        challenge=args.challenge,
-    )
-    return dev_data, train_data
+#     train_data = SliceData(
+#         root=args.data_path / f'{args.challenge}_train',
+#         transform=SquareDataTransformC3_multi(train_mask, args.resolution, args.challenge),
+#         sample_rate=args.sample_rate,
+#         challenge=args.challenge
+#     )
+#     dev_data = SliceData(
+#         root=args.data_path / f'{args.challenge}_val',
+#         transform=SquareDataTransformC3_multi(dev_mask, args.resolution, args.challenge, use_seed=True),
+#         sample_rate=args.sample_rate,
+#         challenge=args.challenge,
+#     )
+#     return dev_data, train_data
 
 
 def create_data_loaders(args):
